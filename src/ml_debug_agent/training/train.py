@@ -67,6 +67,26 @@ BUG_PRESETS: dict[Bug, dict[str, Any]] = {
 }
 
 
+# Human-readable descriptions shown in the MLflow UI (the run's "Description" field).
+BUG_DESCRIPTIONS: dict[Bug, str] = {
+    Bug.NONE: "Clean baseline: no injected bug.",
+    Bug.LR_TOO_HIGH: "Learning rate set to 0.5 (500x baseline). Expect loss explosion, "
+    "accuracy stuck near chance, very large gradient norms.",
+    Bug.OVERFIT: "Trained on only 500 examples with no dropout or weight decay for 30 epochs. "
+    "Expect train accuracy near 100%, val accuracy plateauing low, val loss rising.",
+    Bug.LABEL_SHUFFLE: "Training labels randomly permuted (data-pipeline bug, not visible in "
+    "params). Expect loss flat near 2.3 and chance-level accuracy.",
+    Bug.LEAKAGE: "All validation examples copied into the training set (data-pipeline bug, "
+    "not visible in params). Expect inflated val accuracy and test accuracy below val.",
+    Bug.UNNORMALIZED: "Inputs left as raw 0-255 pixels instead of normalized. Expect high "
+    "initial loss, large early gradients, worse accuracy than clean runs.",
+}
+
+
+def default_run_name(bug: Bug, seed: int) -> str:
+    return f"{bug.value}-s{seed}"
+
+
 def make_config(bug: Bug = Bug.NONE, **overrides: Any) -> TrainConfig:
     """Clean baseline -> apply the bug preset -> apply explicit overrides (e.g. an agent's fix)."""
     cfg = replace(TrainConfig(), **BUG_PRESETS[bug])
@@ -170,11 +190,13 @@ def train(
     loss_fn = nn.CrossEntropyLoss()
 
     mlflow.set_experiment(experiment)
-    with mlflow.start_run(run_name=run_name) as run:
+    with mlflow.start_run(run_name=run_name or default_run_name(bug, cfg.seed)) as run:
         mlflow.log_params({k: v for k, v in asdict(cfg).items() if k not in HIDDEN_FIELDS})
         mlflow.log_param("n_train_examples", len(x_train))
-        # Ground truth for evaluation. Agent tools must NEVER read tags starting with "eval."
+        # Ground truth for evaluation. The run name, description, and "eval." tags all reveal
+        # the bug, so agent tools must only ever expose params, metrics, and artifacts.
         mlflow.set_tag("eval.true_bug", bug.value)
+        mlflow.set_tag("mlflow.note.content", BUG_DESCRIPTIONS[bug])
         mlflow.log_dict(data["split"], "data/split_indices.json")
 
         status = "completed"
