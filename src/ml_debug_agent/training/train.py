@@ -244,7 +244,8 @@ def train(
             mlflow.log_metrics(_finite(metrics), step=epoch)
             print(
                 f"epoch {epoch:>2}  train_loss {metrics['train_loss']:.4f}  "
-                f"train_acc {metrics['train_acc']:.3f}  val_loss {val_loss:.4f}  val_acc {val_acc:.3f}"
+                f"train_acc {metrics['train_acc']:.3f}  "
+                f"val_loss {val_loss:.4f}  val_acc {val_acc:.3f}"
             )
 
         if status == "completed":

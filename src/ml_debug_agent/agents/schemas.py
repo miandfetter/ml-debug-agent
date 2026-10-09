@@ -41,17 +41,22 @@ PATCHABLE_FIELDS = {
 
 
 class Diagnosis(BaseModel):
-    """The final answer about what is wrong with a training run."""
+    """The final answer about what is wrong with a training run.
 
+    Field order matters: an LLM writes the JSON fields in this order, so `evidence`
+    comes first. The model notes its observations before committing to a bug, instead
+    of picking a label first and justifying it afterwards.
+    """
+
+    evidence: list[str] = Field(
+        min_length=1,
+        description="First, list observations from the evidence that look normal or "
+        "abnormal, with numbers, e.g. 'train/val accuracy gap of 0.41 at the final epoch'.",
+    )
     bug: BugType = Field(
-        description="The single most likely problem. Use 'none' if the run looks healthy."
+        description="Then, the single most likely problem. Use 'none' if the run looks healthy."
     )
     confidence: float = Field(ge=0.0, le=1.0, description="How sure you are, from 0 to 1.")
-    evidence: list[str] = Field(
-        default_factory=list,
-        description="Specific observations supporting the diagnosis, with numbers, "
-        "e.g. 'train/val accuracy gap of 0.41 at the final epoch'.",
-    )
 
 
 class EvidenceReport(BaseModel):
