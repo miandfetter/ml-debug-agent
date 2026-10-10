@@ -9,7 +9,12 @@ import pandas as pd
 
 from ml_debug_agent.agents.schemas import BugType, Diagnosis
 from ml_debug_agent.eval import baseline
-from ml_debug_agent.eval.run_benchmark import confusion_matrix, evaluate, summarize
+from ml_debug_agent.eval.run_benchmark import (
+    confusion_matrix,
+    evaluate,
+    results_path,
+    summarize,
+)
 
 
 def _row(true: str, pred: str) -> dict:
@@ -58,6 +63,20 @@ def test_baseline_runs_end_to_end(runs):
 def test_evaluate_per_bug_takes_n_runs_of_each_bug(runs):
     results = evaluate(baseline.diagnose, _experiment_of(runs), per_bug=1)
     assert sorted(results.true_bug) == sorted(b.value for b in BugType)
+
+
+def test_evaluate_bugs_keeps_only_those_bug_types(runs):
+    results = evaluate(baseline.diagnose, _experiment_of(runs), bugs=["leakage", "overfit"])
+    assert sorted(results.true_bug) == ["leakage", "overfit"]
+
+
+def test_results_path_separates_benchmarks_and_subsets():
+    assert str(results_path("results", "benchmark-v2", "baseline")) == (
+        "results/benchmark-v2/baseline.csv"
+    )
+    assert str(
+        results_path("results", "benchmark-v1", "two_agent", per_bug=1, bugs=["overfit", "none"])
+    ) == ("results/benchmark-v1/two_agent_per_bug1_none-overfit.csv")
 
 
 def _experiment_of(runs) -> str:

@@ -18,15 +18,16 @@ from dataclasses import replace
 
 import mlflow
 
+from ml_debug_agent.agents.mlflow_access import benchmark_experiment
 from ml_debug_agent.training.train import (
     BUG_PRESETS,
     Bug,
     TrainConfig,
     default_run_name,
     train,
+    use_experiment,
 )
 
-BENCHMARK_EXPERIMENT = "benchmark-v1"
 EXPERIMENT_DESCRIPTION = (
     "Labeled benchmark for the ML debugging agent: a small MLP on Fashion-MNIST with "
     "5 injected bug types (lr_too_high, overfit, label_shuffle, leakage, unnormalized) "
@@ -63,16 +64,25 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Generate the labeled benchmark of training runs.")
     p.add_argument("--seeds", type=int, default=5, help="runs per bug type")
     p.add_argument("--bugs", nargs="+", type=Bug, choices=list(Bug), default=list(Bug))
-    p.add_argument("--experiment", default=BENCHMARK_EXPERIMENT)
+    p.add_argument(
+        "--experiment",
+        default=None,
+        help="Experiment to generate into. Default: BENCHMARK_EXPERIMENT in .env, else v1.",
+    )
     args = p.parse_args()
+    args.experiment = args.experiment or benchmark_experiment()
 
-    mlflow.set_experiment(args.experiment)
+    use_experiment(args.experiment)
+    print(f"Artifacts go to: {mlflow.get_experiment_by_name(args.experiment).artifact_location}")
     mlflow.set_experiment_tag("mlflow.note.content", EXPERIMENT_DESCRIPTION)
 
     done = existing_run_names(args.experiment)
     jobs = [(bug, seed) for bug in args.bugs for seed in range(args.seeds)]
     todo = [(bug, seed) for bug, seed in jobs if default_run_name(bug, seed) not in done]
-    print(f"{len(jobs)} runs in benchmark, {len(jobs) - len(todo)} already done, {len(todo)} to train\n")
+    print(
+        f"{len(jobs)} runs in benchmark, {len(jobs) - len(todo)} already done, "
+        f"{len(todo)} to train\n"
+    )
 
     start = time.time()
     for i, (bug, seed) in enumerate(todo, 1):

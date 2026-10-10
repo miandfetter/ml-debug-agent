@@ -4,6 +4,7 @@ This is the ONLY code allowed to read the ground truth (via get_true_bug).
 
     uv run python -m ml_debug_agent.eval.run_benchmark --system baseline
     uv run python -m ml_debug_agent.eval.run_benchmark --system single_agent --per-bug 1
+    uv run python -m ml_debug_agent.eval.run_benchmark --system two_agent --bugs label_shuffle
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 
 from ml_debug_agent.agents.mlflow_access import (
-    BENCHMARK_EXPERIMENT,
+    benchmark_experiment,
     get_true_bug,
     list_benchmark_runs,
 )
@@ -39,26 +40,33 @@ def load_system(name: str) -> Callable[[str], Diagnosis]:
     return getattr(importlib.import_module(module_name), func_name)
 
 
-def select_runs(run_ids: list[str], per_bug: int | None) -> list[str]:
-    """Keep the first `per_bug` runs of each bug type, for cheap smoke tests. None keeps all."""
-    if per_bug is None:
+def select_runs(
+    run_ids: list[str], per_bug: int | None = None, bugs: list[str] | None = None
+) -> list[str]:
+    """Keep only runs of the given bug types, and at most `per_bug` of each. None keeps all."""
+    if per_bug is None and bugs is None:
         return run_ids
     taken: dict[str, int] = {}
     kept = []
     for run_id in run_ids:
         bug = get_true_bug(run_id).value
-        if taken.get(bug, 0) < per_bug:
+        if bugs is not None and bug not in bugs:
+            continue
+        if per_bug is None or taken.get(bug, 0) < per_bug:
             taken[bug] = taken.get(bug, 0) + 1
             kept.append(run_id)
     return kept
 
 
 def evaluate(
-    diagnose: Callable[[str], Diagnosis], experiment: str, per_bug: int | None = None
+    diagnose: Callable[[str], Diagnosis],
+    experiment: str,
+    per_bug: int | None = None,
+    bugs: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Diagnose every run (or `per_bug` runs of each bug) and record prediction vs. truth."""
+    """Diagnose every selected run (see select_runs) and record prediction vs. truth."""
     rows = []
-    run_ids = select_runs(list_benchmark_runs(experiment), per_bug)
+    run_ids = select_runs(list_benchmark_runs(experiment), per_bug, bugs)
     for i, run_id in enumerate(run_ids, 1):
         truth = get_true_bug(run_id).value
         start = time.time()
@@ -113,10 +121,32 @@ def confusion_matrix(results: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def results_path(
+    out_dir: str | Path,
+    experiment: str,
+    system: str,
+    per_bug: int | None = None,
+    bugs: list[str] | None = None,
+) -> Path:
+    """results/<experiment>/<system>[_per_bugN][_bug-bug].csv
+
+    One folder per benchmark, so results from different benchmarks never overwrite each
+    other, and subset runs get their own file so they never overwrite a full run.
+    """
+    suffix = f"_per_bug{per_bug}" if per_bug else ""
+    if bugs:
+        suffix += "_" + "-".join(sorted(set(bugs)))
+    return Path(out_dir) / experiment / f"{system}{suffix}.csv"
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Evaluate a diagnoser on the benchmark.")
     p.add_argument("--system", choices=sorted(SYSTEMS), default="baseline")
-    p.add_argument("--experiment", default=BENCHMARK_EXPERIMENT)
+    p.add_argument(
+        "--experiment",
+        default=None,
+        help="MLflow experiment to evaluate. Default: BENCHMARK_EXPERIMENT in .env, else v1.",
+    )
     p.add_argument("--out-dir", default="results")
     p.add_argument(
         "--per-bug",
@@ -125,23 +155,31 @@ def main() -> None:
         metavar="N",
         help="Only evaluate the first N runs of each bug type (a cheap smoke test).",
     )
+    p.add_argument(
+        "--bugs",
+        nargs="+",
+        choices=LABELS,
+        default=None,
+        metavar="BUG",
+        help=f"Only evaluate runs of these bug types. Choices: {', '.join(LABELS)}.",
+    )
     args = p.parse_args()
     if args.per_bug is not None and args.per_bug < 1:
         p.error("--per-bug must be at least 1")
+    args.experiment = args.experiment or benchmark_experiment()
 
-    results = evaluate(load_system(args.system), args.experiment, args.per_bug)
+    results = evaluate(load_system(args.system), args.experiment, args.per_bug, args.bugs)
 
-    out = Path(args.out_dir)
-    out.mkdir(exist_ok=True)
-    # Subset runs get their own file so they never overwrite a full benchmark's results.
-    suffix = f"_per_bug{args.per_bug}" if args.per_bug else ""
-    csv_path = out / f"{args.system}{suffix}.csv"
+    csv_path = results_path(args.out_dir, args.experiment, args.system, args.per_bug, args.bugs)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
     results.to_csv(csv_path, index=False)
 
     m = summarize(results)
     print(f"\n=== {args.system} on {args.experiment} ({m['n_runs']} runs) ===")
     print(f"Accuracy:            {m['accuracy']:.1%}")
-    print(f"False positive rate: {m['false_positive_rate']:.1%}  (clean runs flagged as buggy)")
+    fpr = m["false_positive_rate"]
+    fpr_text = f"{fpr:.1%}" if pd.notna(fpr) else "n/a (no clean runs evaluated)"
+    print(f"False positive rate: {fpr_text}  (clean runs flagged as buggy)")
     print(f"Errors:              {m['errors']}")
     print(f"Mean time per run:   {m['mean_seconds']:.2f}s")
     print("\nPer-bug accuracy:")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing import Any
 
 import mlflow
 import torch
+from dotenv import load_dotenv
 from torch import nn
 from torchvision import datasets
 
@@ -24,6 +26,9 @@ FMNIST_MEAN = 0.2860
 FMNIST_STD = 0.3530
 DATA_DIR = Path("data")
 DEFAULT_EXPERIMENT = "ml-debug-benchmark"
+
+# Settings like AWS_PROFILE and MLFLOW_ARTIFACT_ROOT come from the project's .env file.
+load_dotenv()
 
 
 class Bug(StrEnum):
@@ -170,6 +175,21 @@ def _finite(metrics: dict[str, float]) -> dict[str, float]:
 # ---------------------------------------------------------------- training
 
 
+def use_experiment(name: str) -> None:
+    """Make `name` the active MLflow experiment, creating it first if it doesn't exist.
+
+    If MLFLOW_ARTIFACT_ROOT is set (e.g. s3://my-bucket/mlflow), a NEW experiment stores
+    its artifacts under <root>/<name>. MLflow fixes the location when an experiment is
+    created, so existing experiments keep theirs, wherever that is.
+    """
+    root = os.environ.get("MLFLOW_ARTIFACT_ROOT")
+    if root and mlflow.get_experiment_by_name(name) is None:
+        location = f"{root.rstrip('/')}/{name}"
+        mlflow.create_experiment(name, artifact_location=location)
+        print(f"Created experiment {name!r} with artifacts in {location}")
+    mlflow.set_experiment(name)
+
+
 def train(
     cfg: TrainConfig,
     bug: Bug = Bug.NONE,
@@ -189,7 +209,7 @@ def train(
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     loss_fn = nn.CrossEntropyLoss()
 
-    mlflow.set_experiment(experiment)
+    use_experiment(experiment)
     with mlflow.start_run(run_name=run_name or default_run_name(bug, cfg.seed)) as run:
         mlflow.log_params({k: v for k, v in asdict(cfg).items() if k not in HIDDEN_FIELDS})
         mlflow.log_param("n_train_examples", len(x_train))

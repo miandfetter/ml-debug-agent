@@ -12,6 +12,7 @@ Check what the agent sees for a run:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import fields
 from typing import Any
@@ -22,7 +23,7 @@ from pydantic import BaseModel
 
 from ml_debug_agent.training.train import HIDDEN_FIELDS, Bug, TrainConfig
 
-BENCHMARK_EXPERIMENT = "benchmark-v1"
+DEFAULT_BENCHMARK_EXPERIMENT = "benchmark-v1"
 SPLIT_ARTIFACT = "data/split_indices.json"
 
 # Allowlist, not a blocklist: anything not named here is never exposed.
@@ -63,8 +64,14 @@ def _parse(value: str) -> Any:
     return value
 
 
-def list_benchmark_runs(experiment: str = BENCHMARK_EXPERIMENT) -> list[str]:
+def benchmark_experiment() -> str:
+    """The benchmark to use when none is named: BENCHMARK_EXPERIMENT from .env, or v1."""
+    return os.environ.get("BENCHMARK_EXPERIMENT", DEFAULT_BENCHMARK_EXPERIMENT)
+
+
+def list_benchmark_runs(experiment: str | None = None) -> list[str]:
     """Run IDs of finished runs in an experiment. Returns IDs only, never names."""
+    experiment = experiment or benchmark_experiment()
     exp = mlflow.get_experiment_by_name(experiment)
     if exp is None:
         raise ValueError(f"No MLflow experiment named {experiment!r}. Run the generator first.")

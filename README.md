@@ -152,6 +152,7 @@ Create a `.env` file in the project root to choose the model (it is gitignored):
 LLM_PROVIDER=ollama            # or "gemini"
 OLLAMA_MODEL=qwen3.5:9b
 # GEMINI_MODEL=gemini-2.5-flash   # needs GEMINI_API_KEY in your environment
+BENCHMARK_EXPERIMENT=benchmark-v1   # which benchmark commands use by default
 ```
 
 ### Generate the benchmark
@@ -183,7 +184,8 @@ uv run python -m ml_debug_agent.eval.run_benchmark --system two_agent
 ```
 
 Systems: `baseline`, `single_agent`, `single_agent_thinking`, `two_agent`. Per-run results
-(prediction, evidence, confidence, time, errors) are saved to `results/<system>.csv`.
+(prediction, evidence, confidence, time, errors) are saved to
+`results/<experiment>/<system>.csv`.
 
 ### Inspect one diagnosis
 

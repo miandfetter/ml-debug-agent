@@ -12,6 +12,7 @@ import mlflow
 import pytest
 
 from ml_debug_agent.agents.mlflow_access import (
+    benchmark_experiment,
     get_run_view,
     get_split_indices,
     get_true_bug,
@@ -60,3 +61,9 @@ def test_true_bug_and_listing(runs):
     assert set(list_benchmark_runs(experiment)) == set(runs.values())
     for bug, run_id in runs.items():
         assert get_true_bug(run_id) is bug
+
+def test_benchmark_experiment_comes_from_env(monkeypatch):
+    monkeypatch.delenv("BENCHMARK_EXPERIMENT", raising=False)
+    assert benchmark_experiment() == "benchmark-v1"
+    monkeypatch.setenv("BENCHMARK_EXPERIMENT", "benchmark-v2")
+    assert benchmark_experiment() == "benchmark-v2"

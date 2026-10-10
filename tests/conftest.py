@@ -31,6 +31,8 @@ def runs(tmp_path_factory) -> dict[Bug, str]:
     tmp = tmp_path_factory.mktemp("mlflow")
     with pytest.MonkeyPatch.context() as mp:
         mp.chdir(tmp)  # keep MLflow artifacts out of the repo
+        mp.delenv("MLFLOW_ARTIFACT_ROOT", raising=False)  # tests never write to S3
+        mp.delenv("BENCHMARK_EXPERIMENT", raising=False)  # tests name their experiment
         mp.setattr(train_mod, "_load", _fake_load)
         mlflow.set_tracking_uri(f"sqlite:///{tmp / 'test.db'}")
         ids = {}

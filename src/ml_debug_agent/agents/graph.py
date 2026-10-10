@@ -186,7 +186,7 @@ def decide(
     system = DIAGNOSER_PROMPT + ("" if can_ask else MUST_COMMIT)
     reasoning = llm.invoke(
         [SystemMessage(system), HumanMessage(f"Evidence:\n\n{format_report(report)}")]
-    ).content
+    ).text
     label, request = parse_decision(reasoning)
 
     if request and can_ask:
