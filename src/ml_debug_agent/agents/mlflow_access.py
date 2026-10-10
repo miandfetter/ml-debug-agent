@@ -21,7 +21,7 @@ import mlflow
 from mlflow.tracking import MlflowClient
 from pydantic import BaseModel
 
-from ml_debug_agent.training.train import HIDDEN_FIELDS, Bug, TrainConfig
+from ml_debug_agent.training.config import HIDDEN_FIELDS, Bug, TrainConfig
 
 DEFAULT_BENCHMARK_EXPERIMENT = "benchmark-v1"
 SPLIT_ARTIFACT = "data/split_indices.json"

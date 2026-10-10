@@ -1,0 +1,15 @@
+# Keep secrets, data and local state out of the image. Only the files the Dockerfile
+# copies (pyproject.toml, uv.lock, README.md, src/) are needed.
+.env
+.venv/
+.git/
+data/
+mlruns/
+mlartifacts/
+mlflow.db
+results/
+tests/
+scripts/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/

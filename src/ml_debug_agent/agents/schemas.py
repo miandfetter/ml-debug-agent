@@ -11,8 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-# Reuse the training script's enum so bug names can never drift out of sync.
-from ml_debug_agent.training.train import Bug as BugType
+# Reuse the training config's enum so bug names can never drift out of sync.
+from ml_debug_agent.training.config import Bug as BugType
 
 __all__ = [
     "BugType",

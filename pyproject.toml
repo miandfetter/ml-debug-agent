@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "boto3>=1.43.111",
     "langchain>=1.4.3",
     "langchain-aws>=1.8.1",
     "langchain-core>=1.6.6",
@@ -18,8 +19,6 @@ dependencies = [
     "mlflow>=3.16.1",
     "pydantic>=2.13.5",
     "python-dotenv>=1.2.4",
-    "torch>=2.14.1",
-    "torchvision>=0.29.1",
 ]
 
 [project.scripts]
@@ -34,6 +33,15 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.10",
 ]
+train = [
+    "torch>=2.14.1",
+    "torchvision>=0.29.1",
+]
+
+[tool.uv]
+# Installed by a plain `uv sync` / `uv run`. The Docker image skips both: it only
+# evaluates, so it needs neither the dev tools nor PyTorch.
+default-groups = ["dev", "train"]
 
 [tool.ruff]
 line-length = 100

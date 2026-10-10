@@ -19,14 +19,8 @@ from dataclasses import replace
 import mlflow
 
 from ml_debug_agent.agents.mlflow_access import benchmark_experiment
-from ml_debug_agent.training.train import (
-    BUG_PRESETS,
-    Bug,
-    TrainConfig,
-    default_run_name,
-    train,
-    use_experiment,
-)
+from ml_debug_agent.training.config import BUG_PRESETS, Bug, TrainConfig, default_run_name
+from ml_debug_agent.training.train import train, use_experiment
 
 EXPERIMENT_DESCRIPTION = (
     "Labeled benchmark for the ML debugging agent: a small MLP on Fashion-MNIST with "
