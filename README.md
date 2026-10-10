@@ -93,7 +93,7 @@ the benchmark and reports accuracy, accuracy per bug, false-positive rate (healt
 flagged as buggy) and a confusion matrix. A failed run is recorded as `error` rather than
 stopping the eval.
 
-### 7. Running in the cloud (in progress)
+### 7. Running in the cloud
 
 - **Artifacts in S3.** MLflow keeps run metadata (params, metrics, tags) in a local SQLite
   database and run files in an artifact store. Setting `MLFLOW_ARTIFACT_ROOT` makes new
@@ -110,7 +110,10 @@ stopping the eval.
 - **Amazon Bedrock** is a third model provider (Amazon Nova 2 Lite by default). It's
   implemented and unit-tested; end-to-end runs are waiting on a Bedrock quota for the new
   AWS account.
-- **Credentials:** AWS IAM Identity Center (SSO) locally, never long-lived access keys.
+- **ECS Fargate.** The evaluation runs as an on-demand Fargate task with least-privilege
+  IAM roles and logs in CloudWatch. A full baseline run takes about a minute, end to end.
+- **Credentials:** AWS IAM Identity Center (SSO) locally, never long-lived access keys;
+  IAM roles on Fargate.
 
 ## Results so far
 
@@ -357,10 +360,51 @@ aws ecr describe-images --repository-name ml-debug-agent --query "imageDetails[]
 aws ecr describe-image-scan-findings --repository-name ml-debug-agent --image-id imageTag=latest --query "imageScanFindings.findingSeverityCounts"
 ```
 
+### Run the evaluation on AWS Fargate
+
+The image runs as an on-demand ECS Fargate task (ARM64). On startup it downloads
+`mlflow.db` from S3, runs the benchmark, uploads the results CSV to S3 and exits, so
+nothing keeps running or billing between runs. One command starts a task, waits for it,
+and prints its logs and where the results landed:
+
+```bash
+uv run python scripts/run_cloud_eval.py
+```
+
+Arguments the script doesn't use itself are passed to the container. For example, one run
+of each bug type, or an agent system:
+
+```bash
+uv run python scripts/run_cloud_eval.py --system baseline --per-bug 1
+uv run python scripts/run_cloud_eval.py --system two_agent --bugs label_shuffle
+```
+
+Its own options: `--upload-db` uploads your local `mlflow.db` to S3 first (the cloud only
+sees runs that existed at the last upload), and `--no-wait` starts the task and exits.
+Results are saved under `s3://<your-bucket>/results/<UTC timestamp>/<experiment>/`.
+
+The AWS resources were created once with the CLI (Terraform is a planned next step):
+
+| Resource | Name | Defined in |
+|---|---|---|
+| S3 bucket (`mlflow/` artifacts, `state/mlflow.db`, `results/`) | `ml-debug-artifacts-<account-id>` | |
+| ECR repository | `ml-debug-agent` | |
+| IAM execution role (pull the image, write logs) | `ml-debug-ecs-execution-role` | [trust policy](infra/iam/ecs-tasks-trust-policy.json) + AWS's `AmazonECSTaskExecutionRolePolicy` |
+| IAM task role (the code: read benchmark, write results, call Bedrock) | `ml-debug-ecs-task-role` | [trust policy](infra/iam/ecs-tasks-trust-policy.json) + [permissions](infra/iam/task-role-policy.json) |
+| CloudWatch log group, 14-day retention | `/ecs/ml-debug-agent` | |
+| ECS cluster | `ml-debug` | |
+| Task definition (1 vCPU, 2 GB, ARM64) | `ml-debug-agent-eval` | [task definition](infra/ecs/task-definition.json) |
+| Security group (no inbound, all outbound) in the default VPC | `ml-debug-eval-task` | |
+
+Tasks run in public subnets with a public IP, which avoids a NAT gateway (billed hourly
+even when idle). The task role can only read the benchmark, write under `results/`, and
+call one Bedrock model; it can't delete or overwrite anything.
+
 ## Project layout
 
 ```
 scripts/generate_benchmark.py   build the labeled benchmark
+scripts/run_cloud_eval.py       run the evaluation on Fargate with one command
 src/ml_debug_agent/
   training/config.py            bug types and training configs (no PyTorch)
   training/train.py             MLP training with injectable bugs, logged to MLflow
@@ -372,14 +416,14 @@ src/ml_debug_agent/
   agents/graph.py               two-agent LangGraph system
   eval/baseline.py              rule-based baseline
   eval/run_benchmark.py         evaluation harness
+  eval/cloud_run.py             container entrypoint: S3 download, eval, S3 upload
 tests/                          pytest suite
 Dockerfile, .dockerignore       the evaluation image
+infra/                          IAM policies and the ECS task definition
 ```
 
 ## Next steps
 
-- Run the evaluation as an ECS Fargate task that pulls the image from ECR, downloads
-  `mlflow.db` from S3 at startup, and writes results back to S3
 - Run the agents on Amazon Bedrock once the account's quota is available
 - Define the AWS resources in Terraform, and add CI with GitHub Actions (tests on every
   push; build and push the image on merge, authenticating with OIDC rather than keys)
