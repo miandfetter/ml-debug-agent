@@ -1,0 +1,36 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadBenchmarkArtifactsAndState",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": [
+        "arn:aws:s3:::ml-debug-artifacts-763670091204/mlflow/*",
+        "arn:aws:s3:::ml-debug-artifacts-763670091204/state/*"
+      ]
+    },
+    {
+      "Sid": "ListOnlyTheArtifactArea",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::ml-debug-artifacts-763670091204",
+      "Condition": { "StringLike": { "s3:prefix": ["mlflow/*"] } }
+    },
+    {
+      "Sid": "WriteResults",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::ml-debug-artifacts-763670091204/results/*"
+    },
+    {
+      "Sid": "InvokeNova2LiteThroughTheUsProfile",
+      "Effect": "Allow",
+      "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+      "Resource": [
+        "arn:aws:bedrock:us-east-1:763670091204:inference-profile/us.amazon.nova-2-lite-v1:0",
+        "arn:aws:bedrock:*::foundation-model/amazon.nova-2-lite-v1:0"
+      ]
+    }
+  ]
+}

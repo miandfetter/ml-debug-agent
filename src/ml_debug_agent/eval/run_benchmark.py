@@ -139,7 +139,7 @@ def results_path(
     return Path(out_dir) / experiment / f"{system}{suffix}.csv"
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description="Evaluate a diagnoser on the benchmark.")
     p.add_argument("--system", choices=sorted(SYSTEMS), default="baseline")
     p.add_argument(
@@ -163,7 +163,7 @@ def main() -> None:
         metavar="BUG",
         help=f"Only evaluate runs of these bug types. Choices: {', '.join(LABELS)}.",
     )
-    args = p.parse_args()
+    args = p.parse_args(argv)
     if args.per_bug is not None and args.per_bug < 1:
         p.error("--per-bug must be at least 1")
     args.experiment = args.experiment or benchmark_experiment()

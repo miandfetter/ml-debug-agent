@@ -1,0 +1,36 @@
+{
+  "family": "ml-debug-agent-eval",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "1024",
+  "memory": "2048",
+  "runtimePlatform": {
+    "cpuArchitecture": "ARM64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::763670091204:role/ml-debug-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::763670091204:role/ml-debug-ecs-task-role",
+  "containerDefinitions": [
+    {
+      "name": "eval",
+      "image": "763670091204.dkr.ecr.us-east-1.amazonaws.com/ml-debug-agent:latest",
+      "essential": true,
+      "command": ["--system", "baseline"],
+      "environment": [
+        { "name": "AWS_REGION", "value": "us-east-1" },
+        { "name": "BENCHMARK_EXPERIMENT", "value": "benchmark-v2" },
+        { "name": "MLFLOW_DB_S3_URI", "value": "s3://ml-debug-artifacts-763670091204/state/mlflow.db" },
+        { "name": "RESULTS_S3_URI", "value": "s3://ml-debug-artifacts-763670091204/results" },
+        { "name": "LLM_PROVIDER", "value": "bedrock" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/ml-debug-agent",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "eval"
+        }
+      }
+    }
+  ]
+}

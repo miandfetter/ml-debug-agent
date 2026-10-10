@@ -52,5 +52,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     MLFLOW_TRACKING_URI=sqlite:////app/mlflow.db
 
-ENTRYPOINT ["python", "-m", "ml_debug_agent.eval.run_benchmark"]
+# The wrapper runs run_benchmark, plus the optional S3 download/upload around it (see
+# cloud_run.py). With no S3 settings it behaves exactly like run_benchmark.
+ENTRYPOINT ["python", "-m", "ml_debug_agent.eval.cloud_run"]
 CMD ["--system", "baseline"]

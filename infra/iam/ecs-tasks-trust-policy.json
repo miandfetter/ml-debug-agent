@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowEcsTasksInThisAccountOnly",
+      "Effect": "Allow",
+      "Principal": { "Service": "ecs-tasks.amazonaws.com" },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "ArnLike": { "aws:SourceArn": "arn:aws:ecs:us-east-1:763670091204:*" },
+        "StringEquals": { "aws:SourceAccount": "763670091204" }
+      }
+    }
+  ]
+}
