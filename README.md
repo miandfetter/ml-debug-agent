@@ -10,7 +10,7 @@ and a two-agent LangGraph system in which a diagnoser can ask an investigator fo
 evidence.
 
 **Stack:** PyTorch · MLflow · LangChain · LangGraph · Pydantic · Ollama / Gemini / Amazon Bedrock ·
-Docker · AWS (S3, ECR) · pytest · uv
+Docker · AWS (S3, ECR, ECS Fargate, IAM) · Terraform · pytest · uv
 
 ## How it works
 
@@ -112,6 +112,9 @@ stopping the eval.
   AWS account.
 - **ECS Fargate.** The evaluation runs as an on-demand Fargate task with least-privilege
   IAM roles and logs in CloudWatch. A full baseline run takes about a minute, end to end.
+- **Infrastructure as code.** Every AWS resource is defined in
+  [Terraform](infra/terraform/). They were first created by hand with the CLI, then
+  imported into Terraform without recreating anything.
 - **Credentials:** AWS IAM Identity Center (SSO) locally, never long-lived access keys;
   IAM roles on Fargate.
 
@@ -163,6 +166,12 @@ subsets are small, so treat the comparisons as indicative rather than final.
 - **Docker Desktop pushes an index plus a build attestation by default.** The extra
   untagged entries count against ECR's cleanup rule, and ECR's basic scanning doesn't scan
   an index. Building with `--provenance=false` pushes a single plain image.
+- **Importing hand-built AWS resources into Terraform.** `import` blocks adopted all 15
+  resources into Terraform's state without recreating anything. The first plan showed
+  `15 to import, 0 to add, 9 to change, 0 to destroy`; the 9 changes were tags plus an
+  equivalent rewrite of one IAM policy. Building the bucket ARN from its name, rather than
+  from the bucket resource, kept that policy readable in the plan instead of
+  "known after apply".
 - **A new AWS account had Bedrock quotas of 0 for every model.** Comparing the applied
   quotas with AWS's defaults (`list-aws-default-service-quotas`) showed the limits were
   account overrides rather than a code problem.
@@ -312,18 +321,9 @@ can't reach Ollama on your machine, so the agent systems need `-e LLM_PROVIDER=b
 
 ### Push the image to ECR
 
-One-time setup (already done for this project): a private repository with scanning on
-push and a cleanup rule.
-
-```bash
-aws ecr create-repository --repository-name ml-debug-agent --image-scanning-configuration scanOnPush=true --encryption-configuration encryptionType=AES256
-```
-
-```bash
-aws ecr put-lifecycle-policy --repository-name ml-debug-agent --lifecycle-policy-text '{"rules":[{"rulePriority":1,"description":"Keep only the 5 most recent images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'
-```
-
-The push routine, after each code change. Replace `<account-id>` with your AWS account ID
+The repository itself (private, scanned on push, keeps the 5 newest images) is defined in
+Terraform, in [`ecr.tf`](infra/terraform/ecr.tf); see "AWS infrastructure (Terraform)"
+below. The push routine, after each code change. Replace `<account-id>` with your AWS account ID
 (`aws sts get-caller-identity --query Account --output text`).
 
 1. Build the image:
@@ -383,22 +383,55 @@ Its own options: `--upload-db` uploads your local `mlflow.db` to S3 first (the c
 sees runs that existed at the last upload), and `--no-wait` starts the task and exits.
 Results are saved under `s3://<your-bucket>/results/<UTC timestamp>/<experiment>/`.
 
-The AWS resources were created once with the CLI (Terraform is a planned next step):
-
-| Resource | Name | Defined in |
-|---|---|---|
-| S3 bucket (`mlflow/` artifacts, `state/mlflow.db`, `results/`) | `ml-debug-artifacts-<account-id>` | |
-| ECR repository | `ml-debug-agent` | |
-| IAM execution role (pull the image, write logs) | `ml-debug-ecs-execution-role` | [trust policy](infra/iam/ecs-tasks-trust-policy.json) + AWS's `AmazonECSTaskExecutionRolePolicy` |
-| IAM task role (the code: read benchmark, write results, call Bedrock) | `ml-debug-ecs-task-role` | [trust policy](infra/iam/ecs-tasks-trust-policy.json) + [permissions](infra/iam/task-role-policy.json) |
-| CloudWatch log group, 14-day retention | `/ecs/ml-debug-agent` | |
-| ECS cluster | `ml-debug` | |
-| Task definition (1 vCPU, 2 GB, ARM64) | `ml-debug-agent-eval` | [task definition](infra/ecs/task-definition.json) |
-| Security group (no inbound, all outbound) in the default VPC | `ml-debug-eval-task` | |
-
 Tasks run in public subnets with a public IP, which avoids a NAT gateway (billed hourly
 even when idle). The task role can only read the benchmark, write under `results/`, and
 call one Bedrock model; it can't delete or overwrite anything.
+
+### AWS infrastructure (Terraform)
+
+Every AWS resource the project uses is defined in [`infra/terraform/`](infra/terraform/):
+
+| Resource | Name | Defined in |
+|---|---|---|
+| S3 bucket (`mlflow/` artifacts, `state/mlflow.db`, `results/`): private, encrypted, protected from deletion | `ml-debug-artifacts-<account-id>` | [`s3.tf`](infra/terraform/s3.tf) |
+| ECR repository (scan on push, keeps the 5 newest images) | `ml-debug-agent` | [`ecr.tf`](infra/terraform/ecr.tf) |
+| IAM execution role (pull the image, write logs) | `ml-debug-ecs-execution-role` | [`iam.tf`](infra/terraform/iam.tf) |
+| IAM task role (the code: read benchmark, write results, call one Bedrock model) | `ml-debug-ecs-task-role` | [`iam.tf`](infra/terraform/iam.tf) |
+| CloudWatch log group, 14-day retention | `/ecs/ml-debug-agent` | [`ecs.tf`](infra/terraform/ecs.tf) |
+| ECS cluster and task definition (1 vCPU, 2 GB, ARM64) | `ml-debug`, `ml-debug-agent-eval` | [`ecs.tf`](infra/terraform/ecs.tf) |
+| Security group (no inbound, all outbound) in the default VPC | `ml-debug-eval-task` | [`network.tf`](infra/terraform/network.tf) |
+
+Settings you might change (image tag, default benchmark, Bedrock model, log retention)
+are variables in [`variables.tf`](infra/terraform/variables.tf). Every resource is
+tagged `Project=ml-debug-agent` and `ManagedBy=terraform`.
+
+Run Terraform from its folder, with your AWS profile active:
+
+```bash
+cd infra/terraform
+terraform init
+```
+
+`init` downloads the AWS provider once. To change infrastructure, edit the `.tf` files,
+review the dry run, then apply it (it asks you to type `yes`):
+
+```bash
+terraform plan
+terraform apply
+```
+
+After applying, `terraform plan` should report `No changes`. If it shows changes you
+didn't make in code, something was edited by hand in AWS ("drift"). To print the values
+other commands need, such as the ECR URL and the bucket name:
+
+```bash
+terraform output
+```
+
+The state file (`terraform.tfstate`) stays local and is gitignored; the provider lock
+file (`.terraform.lock.hcl`) is committed so everyone uses the same provider version.
+`terraform destroy` would remove everything except the bucket, which is protected by
+`prevent_destroy`.
 
 ## Project layout
 
@@ -419,14 +452,15 @@ src/ml_debug_agent/
   eval/cloud_run.py             container entrypoint: S3 download, eval, S3 upload
 tests/                          pytest suite
 Dockerfile, .dockerignore       the evaluation image
-infra/                          IAM policies and the ECS task definition
+infra/terraform/                all AWS infrastructure, as Terraform
 ```
 
 ## Next steps
 
 - Run the agents on Amazon Bedrock once the account's quota is available
-- Define the AWS resources in Terraform, and add CI with GitHub Actions (tests on every
-  push; build and push the image on merge, authenticating with OIDC rather than keys)
+- Add CI with GitHub Actions: tests on every push; build and push the image on merge,
+  authenticating to AWS with OIDC (a role defined in Terraform) rather than stored keys
+- Keep the Terraform state in S3 with locking, the standard setup for a team
 - Run the full 30-run benchmark for the two-agent system
 - Add bug types the rule baseline has no rule for, to test generalization
 - Shrink the image further by using `mlflow-skinny`

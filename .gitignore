@@ -227,3 +227,9 @@ mlartifacts/
 
 # Benchmark output
 results/
+
+# Terraform: local working files and state (state can hold sensitive values)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
