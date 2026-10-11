@@ -9,8 +9,10 @@ resource "aws_iam_openid_connect_provider" "github" {
   client_id_list = ["sts.amazonaws.com"]
 }
 
-# Who may use the role: only workflow runs on the main branch of this one repository.
-# A fork, another branch, or a pull request gets a different "sub" value and is refused.
+# Who may use the role: only workflow runs on the main branch of this one repository,
+# identified by its permanent numeric IDs (see github_oidc_subject_prefix). A fork, another
+# branch, a pull request, or a new repository reusing the name gets a different "sub" value
+# and is refused.
 data "aws_iam_policy_document" "github_actions_trust" {
   statement {
     sid     = "GitHubActionsMainBranchOnly"
@@ -30,7 +32,7 @@ data "aws_iam_policy_document" "github_actions_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:ref:refs/heads/main"]
+      values   = ["${var.github_oidc_subject_prefix}:ref:refs/heads/main"]
     }
   }
 }

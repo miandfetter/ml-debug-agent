@@ -34,8 +34,13 @@ variable "log_retention_days" {
   default     = 14
 }
 
-variable "github_repository" {
-  description = "GitHub repository (owner/name) whose main branch may push images to ECR."
+variable "github_oidc_subject_prefix" {
+  description = <<-EOT
+    Start of the "sub" claim in this repository's GitHub OIDC tokens. GitHub's immutable
+    format includes the owner's and repository's numeric IDs, so a deleted-and-recreated
+    repository with the same name can't match. Look it up with:
+    gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix
+  EOT
   type        = string
-  default     = "miandfetter/ml-debug-agent"
+  default     = "repo:miandfetter@84156113/ml-debug-agent@1403793351"
 }
