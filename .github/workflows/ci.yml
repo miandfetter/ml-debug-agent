@@ -19,11 +19,11 @@ concurrency:
 jobs:
   test:
     name: Lint and test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, so the OS changes only when we choose
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.0 # this action publishes only full version tags
         with:
           version: "0.12.23"
           enable-cache: true
@@ -40,7 +40,7 @@ jobs:
 
   terraform:
     name: Terraform format and validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, so the OS changes only when we choose
     defaults:
       run:
         working-directory: infra/terraform
