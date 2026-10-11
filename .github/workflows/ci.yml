@@ -59,3 +59,45 @@ jobs:
         run: |
           terraform init -backend=false -input=false
           terraform validate
+
+  # CD: after both checks pass on a push to main, build the image and push it to ECR.
+  deploy:
+    name: Build and push image
+    needs: [test, terraform]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm # ARM64, the same architecture as the Fargate task
+    permissions:
+      contents: read
+      id-token: write # lets this job request GitHub's OIDC token, which AWS trusts
+    steps:
+      - uses: actions/checkout@v7
+
+      # Exchanges GitHub's OIDC token for short-lived AWS credentials. No AWS keys are
+      # stored in GitHub; the role only trusts this repository's main branch.
+      - name: Get AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v4
+
+      # Tagged with the commit (traceable to the exact code) and latest (what the task
+      # definition runs). Layers are cached between runs, so unchanged ones rebuild fast.
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          provenance: false # a single plain image, as in the local push routine
+          sbom: false
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/ml-debug-agent:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/ml-debug-agent:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
