@@ -29,3 +29,8 @@ output "security_group_id" {
 output "public_subnet_ids" {
   value = data.aws_subnets.public.ids
 }
+
+output "github_actions_role_arn" {
+  description = "Role the deploy workflow assumes (role-to-assume in .github/workflows/deploy.yml)."
+  value       = aws_iam_role.github_actions.arn
+}

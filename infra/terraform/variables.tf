@@ -33,3 +33,9 @@ variable "log_retention_days" {
   type        = number
   default     = 14
 }
+
+variable "github_repository" {
+  description = "GitHub repository (owner/name) whose main branch may push images to ECR."
+  type        = string
+  default     = "miandfetter/ml-debug-agent"
+}
