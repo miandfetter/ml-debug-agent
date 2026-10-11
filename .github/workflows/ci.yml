@@ -1,0 +1,61 @@
+# Checks every push to main and every pull request. Needs no AWS access: the tests use
+# fake models and fake AWS clients.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only access to the repository; nothing in CI needs more.
+permissions:
+  contents: read
+
+# A newer push to the same branch cancels the run that's still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.12.23"
+          enable-cache: true
+
+      # Exactly the versions in uv.lock. On Linux that includes the CPU-only PyTorch.
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check src tests scripts
+
+      - name: Test
+        run: uv run pytest -q
+
+  terraform:
+    name: Terraform format and validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.5"
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+
+      # -backend=false: check the code without touching any state or AWS account.
+      - name: Validate
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate

@@ -13,6 +13,19 @@ import pytest
 from ml_debug_agent.agents import llm
 
 
+@pytest.fixture(autouse=True)
+def fake_aws_credentials(monkeypatch):
+    """Construct the Bedrock client the same way on every machine.
+
+    Without this, the tests would depend on the local AWS setup: a profile from .env that
+    doesn't exist (e.g. in a container) makes construction fail. Fake keys are never used,
+    because these tests don't send requests.
+    """
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+
+
 def test_bedrock_defaults(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "bedrock")
     monkeypatch.delenv("BEDROCK_MODEL", raising=False)
