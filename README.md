@@ -1,5 +1,7 @@
 # ml-debug-agent
 
+[![CI](https://github.com/miandfetter/ml-debug-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/miandfetter/ml-debug-agent/actions/workflows/ci.yml)
+
 LLM agents that diagnose what went wrong in a machine learning training run, using only
 what an engineer would see in the experiment tracker: the logged config, per-epoch
 metrics, and the train/validation split.
@@ -10,7 +12,7 @@ and a two-agent LangGraph system in which a diagnoser can ask an investigator fo
 evidence.
 
 **Stack:** PyTorch · MLflow · LangChain · LangGraph · Pydantic · Ollama / Gemini / Amazon Bedrock ·
-Docker · AWS (S3, ECR, ECS Fargate, IAM) · Terraform · pytest · uv
+Docker · AWS (S3, ECR, ECS Fargate, IAM) · Terraform · GitHub Actions · pytest · uv
 
 ## How it works
 
@@ -115,8 +117,11 @@ stopping the eval.
 - **Infrastructure as code.** Every AWS resource is defined in
   [Terraform](infra/terraform/). They were first created by hand with the CLI, then
   imported into Terraform without recreating anything.
-- **Credentials:** AWS IAM Identity Center (SSO) locally, never long-lived access keys;
-  IAM roles on Fargate.
+- **CI/CD.** GitHub Actions runs lint, the tests and Terraform checks on every push and
+  pull request. After they pass on `main`, it builds the ARM64 image and pushes it to ECR,
+  authenticating to AWS with OIDC instead of stored keys.
+- **Credentials:** AWS IAM Identity Center (SSO) locally, IAM roles on Fargate, and OIDC
+  in GitHub Actions. No long-lived AWS access keys anywhere.
 
 ## Results so far
 
@@ -172,6 +177,20 @@ subsets are small, so treat the comparisons as indicative rather than final.
   equivalent rewrite of one IAM policy. Building the bucket ARN from its name, rather than
   from the bucket resource, kept that policy readable in the plan instead of
   "known after apply".
+- **GitHub Actions couldn't assume the AWS role: the OIDC subject format had changed.**
+  The workflow log only said "Not authorized to perform sts:AssumeRoleWithWebIdentity".
+  CloudTrail recorded the token's actual subject,
+  `repo:<owner>@<owner-id>/<repo>@<repo-id>:ref:refs/heads/main`: the repository uses
+  GitHub's immutable subject format, which adds permanent numeric IDs so a deleted and
+  recreated repository with the same name can't match. The role was trusting the old
+  `repo:<owner>/<repo>:...` form. The fix was to trust the new format rather than turn it
+  off.
+- **On Linux, PyTorch pulls in several GB of NVIDIA GPU libraries by default.** CI would
+  download them on every run for tests that never use a GPU. A uv index source installs
+  the CPU-only build on Linux, while macOS keeps the normal build.
+- **Not every GitHub Action publishes a major-version tag.** `astral-sh/setup-uv@v10`
+  failed before any step ran because the action only publishes full versions like
+  `v10.3.0`. `actionlint` checks a workflow's syntax but not whether each version exists.
 - **A new AWS account had Bedrock quotas of 0 for every model.** Comparing the applied
   quotas with AWS's defaults (`list-aws-default-service-quotas`) showed the limits were
   account overrides rather than a code problem.
@@ -290,7 +309,8 @@ The tests use scripted fake models, so they need no LLM, and train tiny stand-in
 throwaway MLflow store. They need no AWS access either: they never write to S3 and only
 construct (never call) the Bedrock client. They cover the tools, the eval harness, the
 agents' plumbing, the two-agent routing and follow-up cap, the model providers, the
-artifact-location logic, and the no-give-away rule for prompts and tool descriptions.
+artifact-location logic, the cloud entrypoint and launcher, and the no-give-away rule for
+prompts and tool descriptions. CI runs them on every push (see "CI/CD" below).
 
 ### Docker
 
@@ -323,7 +343,10 @@ can't reach Ollama on your machine, so the agent systems need `-e LLM_PROVIDER=b
 
 The repository itself (private, scanned on push, keeps the 5 newest images) is defined in
 Terraform, in [`ecr.tf`](infra/terraform/ecr.tf); see "AWS infrastructure (Terraform)"
-below. The push routine, after each code change. Replace `<account-id>` with your AWS account ID
+below.
+
+**Merges to `main` push the image automatically** (see "CI/CD" below), so the manual
+routine is only needed to try out an image before committing. Replace `<account-id>` with your AWS account ID
 (`aws sts get-caller-identity --query Account --output text`).
 
 1. Build the image:
@@ -400,6 +423,7 @@ Every AWS resource the project uses is defined in [`infra/terraform/`](infra/ter
 | CloudWatch log group, 14-day retention | `/ecs/ml-debug-agent` | [`ecs.tf`](infra/terraform/ecs.tf) |
 | ECS cluster and task definition (1 vCPU, 2 GB, ARM64) | `ml-debug`, `ml-debug-agent-eval` | [`ecs.tf`](infra/terraform/ecs.tf) |
 | Security group (no inbound, all outbound) in the default VPC | `ml-debug-eval-task` | [`network.tf`](infra/terraform/network.tf) |
+| GitHub OIDC provider, and a role only this repository's `main` branch can assume (push to the ECR repository, nothing else) | `ml-debug-github-actions-ecr-push` | [`github.tf`](infra/terraform/github.tf) |
 
 Settings you might change (image tag, default benchmark, Bedrock model, log retention)
 are variables in [`variables.tf`](infra/terraform/variables.tf). Every resource is
@@ -433,6 +457,51 @@ file (`.terraform.lock.hcl`) is committed so everyone uses the same provider ver
 `terraform destroy` would remove everything except the bucket, which is protected by
 `prevent_destroy`.
 
+### CI/CD (GitHub Actions)
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push to `main` and
+every pull request:
+
+```
+git push
+  │
+  ├─ Lint and test ─────────────┐   ruff, then pytest (no AWS access needed)
+  │                              ├─► both pass, on a push to main?
+  └─ Terraform fmt + validate ──┘         │
+                                          ▼
+                              Build and push image
+                              ARM64 runner → OIDC → ECR
+                              tags: <commit SHA> and latest
+```
+
+- **CI:** two read-only jobs in parallel. The tests use fake models and fake AWS
+  clients, and on Linux PyTorch installs as its CPU-only build, so a run takes under a
+  minute.
+- **CD:** runs only after both checks pass, and only for pushes to `main`. It builds on
+  GitHub's ARM64 runner (the same architecture as the Fargate task), caches layers
+  between runs, and tags each image with the commit that built it as well as `latest`,
+  which the task definition runs.
+- **No AWS keys in GitHub.** The deploy job requests a signed OIDC token from GitHub, and
+  AWS exchanges it for 1-hour credentials for one role. That role trusts only this
+  repository's `main` branch, identified by its permanent numeric IDs, and can only push
+  to the ECR repository: it can't delete images, read the bucket or run tasks. The role
+  ARN comes from the repository variable `AWS_ROLE_ARN`
+  (`gh variable set AWS_ROLE_ARN --body "<terraform output github_actions_role_arn>"`).
+- **`terraform apply` stays manual**, after reviewing the plan. Automating it would mean
+  giving CI broad AWS permissions.
+
+To follow a run after pushing:
+
+```bash
+gh run watch
+```
+
+Or open the repository's **Actions** tab. For the output of a failed step:
+
+```bash
+gh run view <run-id> --log-failed
+```
+
 ## Project layout
 
 ```
@@ -453,14 +522,14 @@ src/ml_debug_agent/
 tests/                          pytest suite
 Dockerfile, .dockerignore       the evaluation image
 infra/terraform/                all AWS infrastructure, as Terraform
+.github/workflows/ci.yml        CI (lint, tests, Terraform checks) and CD (push to ECR)
 ```
 
 ## Next steps
 
 - Run the agents on Amazon Bedrock once the account's quota is available
-- Add CI with GitHub Actions: tests on every push; build and push the image on merge,
-  authenticating to AWS with OIDC (a role defined in Terraform) rather than stored keys
 - Keep the Terraform state in S3 with locking, the standard setup for a team
+- Pin GitHub Actions to commit SHAs, with Dependabot to keep them up to date
 - Run the full 30-run benchmark for the two-agent system
 - Add bug types the rule baseline has no rule for, to test generalization
 - Shrink the image further by using `mlflow-skinny`
