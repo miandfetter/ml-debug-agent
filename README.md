@@ -123,18 +123,41 @@ stopping the eval.
 - **Credentials:** AWS IAM Identity Center (SSO) locally, IAM roles on Fargate, and OIDC
   in GitHub Actions. No long-lived AWS access keys anywhere.
 
-## Results so far
+## Results
 
-All results are on `benchmark-v1` unless noted.
+### Headline: Gemini 3.7 Flash on `benchmark-v2` (30 runs)
 
-| Diagnoser | Model | Runs | Correct |
-|---|---|---|---|
-| Rule baseline | none | 30 | **30 / 30** |
-| Rule baseline, in Docker | none | 30 (`benchmark-v2`, artifacts in S3) | **30 / 30** |
-| Single agent | gemma4:e2b (2B, local) | 30 | 5 / 30 (predicted `none` every time) |
-| Single agent | gemini-2.5-flash | 6 (1 per bug) | 5 / 5 completed; the 6th hit the free-tier quota |
-| Single agent | qwen3.5:9b (local) | 30 | **20 / 30** |
-| Two agents | qwen3.5:9b (local) | 6 (1 per bug) | **5 / 6** |
+| Diagnoser | Correct | Accuracy | False positives (healthy runs flagged) | Mean time per run |
+|---|---|---|---|---|
+| **Two agents** (LangGraph) | **29 / 30** | **96.7%** | 0 of 5 | 16.5 s |
+| Single agent | 28 / 30 | 93.3% | 0 of 5 | 14.9 s |
+
+By bug type:
+
+| | none | lr_too_high | overfit | label_shuffle | leakage | unnormalized |
+|---|---|---|---|---|---|---|
+| Two agents | 5/5 | 5/5 | **4/5** | 5/5 | 5/5 | 5/5 |
+| Single agent | 5/5 | 5/5 | **3/5** | 5/5 | 5/5 | 5/5 |
+
+Every miss was an `overfit` run diagnosed as healthy. Both systems missed the same run:
+it has the overfit configuration (500 training examples, no regularization) but hadn't
+started overfitting yet. Its validation loss was still falling at the last epoch, and its
+train/validation accuracy gap was half that of the other overfit runs. The label
+describes the setup, not what the curves show. The single agent's second miss had only a
+slight rise in validation loss.
+
+With 5 runs per bug type, a one-run difference is within noise: on this model the two
+designs perform about the same.
+
+### Earlier results, by model
+
+| Diagnoser | Model | Benchmark | Runs | Correct |
+|---|---|---|---|---|
+| Rule baseline | none | v1 | 30 | 30 / 30 |
+| Rule baseline, in Docker | none | v2 (artifacts in S3) | 30 | 30 / 30 |
+| Single agent | gemma4:e2b (2B, local) | v1 | 30 | 5 / 30 (predicted `none` every time) |
+| Single agent | qwen3.5:9b (local) | v1 | 30 | 20 / 30 |
+| Two agents | qwen3.5:9b (local) | v1 | 6 (1 per bug) | 5 / 6 |
 
 Single agent with qwen3.5:9b, by bug:
 
@@ -142,11 +165,17 @@ Single agent with qwen3.5:9b, by bug:
 |---|---|---|---|---|---|
 | 5/5 | 4/5 | 4/5 | **0/5** | 5/5 | 2/5 |
 
-The prompts and tool descriptions changed between some of these runs, and the 6-run
-subsets are small, so treat the comparisons as indicative rather than final.
+The prompts and tool descriptions changed between some of the earlier runs, so treat
+those comparisons as indicative.
 
 ### What I learned
 
+- **The two-agent structure helps most when the model is weaker.** On qwen3.5:9b, the
+  single agent got `label_shuffle` 0/5, and the two-agent diagnoser's free-text reasoning
+  step (comparing the loss with chance level) fixed it. On Gemini 3.7 Flash, both designs
+  get every `label_shuffle` run right and score within one run of each other.
+- **Confidence scores aren't calibrated.** The two-agent system's one wrong answer came
+  with confidence 1.0.
 - **The rule baseline scores 100% because its author designed the bugs.** Its thresholds
   are tuned to this benchmark. The agents get no thresholds, so they are tested on
   reasoning from evidence, which is what matters for bugs nobody wrote a rule for. A
@@ -530,7 +559,6 @@ infra/terraform/                all AWS infrastructure, as Terraform
 - Run the agents on Amazon Bedrock once the account's quota is available
 - Keep the Terraform state in S3 with locking, the standard setup for a team
 - Pin GitHub Actions to commit SHAs, with Dependabot to keep them up to date
-- Run the full 30-run benchmark for the two-agent system
 - Add bug types the rule baseline has no rule for, to test generalization
 - Shrink the image further by using `mlflow-skinny`
 

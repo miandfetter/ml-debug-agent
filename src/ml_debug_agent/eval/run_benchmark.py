@@ -121,22 +121,38 @@ def confusion_matrix(results: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def model_label(system: str) -> str | None:
+    """'<provider>-<model>' for systems that use an LLM, e.g. 'gemini-gemini-2.5-flash'.
+
+    None for the baseline, which uses no model. Characters that don't belong in a file
+    name (':' and '/', as in 'qwen3.5:9b') become '-'.
+    """
+    if system == "baseline":
+        return None
+    from ml_debug_agent.agents.llm import model_name, provider  # LLM settings, read lazily
+
+    return f"{provider()}-{model_name()}".replace(":", "-").replace("/", "-")
+
+
 def results_path(
     out_dir: str | Path,
     experiment: str,
     system: str,
     per_bug: int | None = None,
     bugs: list[str] | None = None,
+    model: str | None = None,
 ) -> Path:
-    """results/<experiment>/<system>[_per_bugN][_bug-bug].csv
+    """results/<experiment>/<system>[__<model>][_per_bugN][_bug-bug].csv
 
-    One folder per benchmark, so results from different benchmarks never overwrite each
-    other, and subset runs get their own file so they never overwrite a full run.
+    One folder per benchmark, the model in the name, and subsets in their own files, so
+    results from different benchmarks, models or subsets never overwrite each other.
     """
-    suffix = f"_per_bug{per_bug}" if per_bug else ""
+    name = f"{system}__{model}" if model else system
+    if per_bug:
+        name += f"_per_bug{per_bug}"
     if bugs:
-        suffix += "_" + "-".join(sorted(set(bugs)))
-    return Path(out_dir) / experiment / f"{system}{suffix}.csv"
+        name += "_" + "-".join(sorted(set(bugs)))
+    return Path(out_dir) / experiment / f"{name}.csv"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -170,12 +186,17 @@ def main(argv: list[str] | None = None) -> None:
 
     results = evaluate(load_system(args.system), args.experiment, args.per_bug, args.bugs)
 
-    csv_path = results_path(args.out_dir, args.experiment, args.system, args.per_bug, args.bugs)
+    model = model_label(args.system)
+    results.insert(0, "model", model or "")  # so a CSV says which model produced it
+    csv_path = results_path(
+        args.out_dir, args.experiment, args.system, args.per_bug, args.bugs, model
+    )
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     results.to_csv(csv_path, index=False)
 
     m = summarize(results)
-    print(f"\n=== {args.system} on {args.experiment} ({m['n_runs']} runs) ===")
+    on_model = f" with {model}" if model else ""
+    print(f"\n=== {args.system}{on_model} on {args.experiment} ({m['n_runs']} runs) ===")
     print(f"Accuracy:            {m['accuracy']:.1%}")
     fpr = m["false_positive_rate"]
     fpr_text = f"{fpr:.1%}" if pd.notna(fpr) else "n/a (no clean runs evaluated)"

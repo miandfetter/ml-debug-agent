@@ -1,6 +1,6 @@
 """Tests for the eval harness and the baseline.
 
-    uv run pytest
+uv run pytest
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from ml_debug_agent.eval import baseline
 from ml_debug_agent.eval.run_benchmark import (
     confusion_matrix,
     evaluate,
+    model_label,
     results_path,
     summarize,
 )
@@ -68,6 +69,18 @@ def test_evaluate_per_bug_takes_n_runs_of_each_bug(runs):
 def test_evaluate_bugs_keeps_only_those_bug_types(runs):
     results = evaluate(baseline.diagnose, _experiment_of(runs), bugs=["leakage", "overfit"])
     assert sorted(results.true_bug) == ["leakage", "overfit"]
+
+
+def test_results_path_includes_the_model():
+    path = results_path("results", "benchmark-v2", "two_agent", model="gemini-gemini-2.5-flash")
+    assert str(path) == "results/benchmark-v2/two_agent__gemini-gemini-2.5-flash.csv"
+
+
+def test_model_label(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3.5:9b")
+    assert model_label("two_agent") == "ollama-qwen3.5-9b"
+    assert model_label("baseline") is None
 
 
 def test_results_path_separates_benchmarks_and_subsets():
